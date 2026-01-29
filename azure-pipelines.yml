@@ -73,9 +73,20 @@ stages:
         deploy:
           steps:
 
+          # 1. Download build artifact
           - download: current
             artifact: '$(artifactName)'
 
+          # 2. Retrieve secrets from Azure Key Vault
+          - task: AzureKeyVault@2
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              KeyVaultName: 'your-keyvault-name'   # Replace with your Key Vault
+              SecretsFilter: '*'                   # Fetch all secrets
+              RunAsPreJob: false
+            name: FetchSecrets
+
+          # 3. Deploy to App Service using secrets
           - task: AzureWebApp@1
             displayName: 'Deploy to Dev App Service'
             inputs:
@@ -83,6 +94,11 @@ stages:
               appType: 'webApp'
               appName: '$(devAppName)'
               package: '$(Pipeline.Workspace)/$(artifactName)/**'
+              # You can use secrets as environment variables
+              appSettings: |
+                CONNECTION_STRING=$(myConnectionString)  # Example secret
+                API_KEY=$(myApiKey)
+
 
 # =====================================================
 # TEST DEPLOYMENT
