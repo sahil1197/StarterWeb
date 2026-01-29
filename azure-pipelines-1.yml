@@ -37,3 +37,74 @@ stages:
         tags: |
           $(Build.BuildId)
           latest
+
+          # -----------------------------------
+          # Attach ACR to AKS (one-time / idempotent)
+          # -----------------------------------
+    - task: AzureCLI@2
+      displayName: 'Attach ACR to AKS'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az aks update \
+            --resource-group $(aksResourceGroup) \
+            --name $(aksClusterName) \
+            --attach-acr $(acrName)
+
+
+- stage: AKS
+  displayName: 'Deploy to AKS'
+  dependsOn: Container
+  condition: succeeded()
+
+  jobs:
+  - deployment: DeployAKS
+    displayName: 'AKS Deployment'
+    environment: 'aks-dev'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+
+          # ----------------------------
+          # Set image tag dynamically
+          # ----------------------------
+          - script: |
+              sed -i 's|IMAGE_TAG|$(Build.BuildId)|g' k8s/deployment.yaml
+            displayName: 'Inject image tag'
+
+          # ----------------------------
+          # Set AKS context
+          # ----------------------------
+          - task: AzureCLI@2
+            displayName: 'Login to AKS'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az aks get-credentials \
+                  --resource-group $(aksResourceGroup) \
+                  --name $(aksClusterName) \
+                  --overwrite-existing
+
+          # ----------------------------
+          # Deploy to Kubernetes
+          # ----------------------------
+          - task: Kubernetes@1
+            displayName: 'Apply Kubernetes manifests'
+            inputs:
+              connectionType: 'None'
+              namespace: '$(k8sNamespace)'
+              command: apply
+              useConfigurationFile: true
+              configuration: |
+                k8s/namespace.yaml
+                k8s/deployment.yaml
+                k8s/service.yaml
