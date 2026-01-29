@@ -1,0 +1,39 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  # AKS
+  aksClusterName: 'your-aks-cluster'
+  aksResourceGroup: 'your-aks-rg'
+  k8sNamespace: 'angular-starter'
+  # Azure service connection
+  azureSubscription: ''
+
+
+stages:
+
+- stage: Container
+  displayName: 'Container Build & Push'
+  dependsOn: CI
+  jobs:
+  - job: BuildAndPush
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: Docker@2
+      displayName: 'Build and Push'
+      inputs:
+        command: buildAndPush
+        repository: '$(imageName)'
+        dockerfile: Dockerfile
+        containerRegistry: '$(acrServiceConnection)'
+        tags: |
+          $(Build.BuildId)
+          latest
