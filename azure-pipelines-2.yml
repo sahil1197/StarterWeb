@@ -1,0 +1,107 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  # AKS
+  aksClusterName: 'your-aks-cluster'
+  aksResourceGroup: 'your-aks-rg'
+  k8sNamespace: 'angular-starter'
+
+  # Azure
+  azureSubscription: ''
+  acrName: 'your-acr-name'
+
+  # Image
+  imageName: 'angular-starter'
+  acrLoginServer: 'youracr.azurecr.io'
+  acrServiceConnection: 'acr-service-connection'
+
+stages:
+
+# =====================================================
+# CONTAINER BUILD & PUSH
+# =====================================================
+- stage: Container
+  displayName: 'Container Build & Push'
+  jobs:
+  - job: BuildAndPush
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+
+    - checkout: self
+
+    - task: Docker@2
+      displayName: 'Build and Push Image to ACR'
+      inputs:
+        command: buildAndPush
+        repository: '$(imageName)'
+        dockerfile: Dockerfile
+        containerRegistry: '$(acrServiceConnection)'
+        tags: |
+          $(Build.BuildId)
+          latest
+
+    # Attach ACR to AKS (safe to run multiple times)
+    - task: AzureCLI@2
+      displayName: 'Attach ACR to AKS'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az aks update \
+            --resource-group $(aksResourceGroup) \
+            --name $(aksClusterName) \
+            --attach-acr $(acrName)
+
+# =====================================================
+# AKS DEPLOY VIA HELM
+# =====================================================
+- stage: AKS
+  displayName: 'Deploy to AKS (Helm)'
+  dependsOn: Container
+  condition: succeeded()
+
+  jobs:
+  - deployment: DeployAKS
+    displayName: 'AKS Helm Deployment'
+    environment: 'aks-dev'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - checkout: self
+
+          # Login to AKS
+          - task: AzureCLI@2
+            displayName: 'Login to AKS'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az aks get-credentials \
+                  --resource-group $(aksResourceGroup) \
+                  --name $(aksClusterName) \
+                  --overwrite-existing
+
+          # Helm deploy
+          - script: |
+              helm upgrade --install angular-starter helm/angular-starter \
+                --namespace $(k8sNamespace) \
+                --create-namespace \
+                --set image.repository=$(acrLoginServer)/$(imageName) \
+                --set image.tag=$(Build.BuildId)
+            displayName: 'Deploy to AKS using Helm'
