@@ -1,0 +1,35 @@
+namespace: angular-starter
+
+replicaCount: 2
+
+image:
+  repository: youracr.azurecr.io/angular-starter
+  pullPolicy: Always
+  tag: ""   # overridden by pipeline (e.g. BuildId)
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+probes:
+  readiness:
+    path: /
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+  liveness:
+    path: /
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
