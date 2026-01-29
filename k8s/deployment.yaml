@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: angular-starter
+  namespace: angular-starter
+  labels:
+    app: angular-starter
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+
+  selector:
+    matchLabels:
+      app: angular-starter
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app: angular-starter
+    spec:
+      containers:
+        - name: angular-starter
+          image: youracr.azurecr.io/angular-starter:IMAGE_TAG
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 80
+
+          # --------------------
+          # Readiness Probe
+          # --------------------
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+          # --------------------
+          # Liveness Probe
+          # --------------------
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
