@@ -1,0 +1,159 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  nodeVersion: '20.x'
+  artifactName: 'angular-starter'
+  distFolder: 'dist'
+
+  # Azure service connection
+  azureSubscription: ''
+
+  # App Services per environment
+  devAppName: 'angular-starter-dev'
+  testAppName: 'angular-starter-test'
+  prodAppName: 'angular-starter-prod'
+
+stages:
+
+# =====================================================
+# CI STAGE – Build & Test Once
+# =====================================================
+- stage: CI
+  displayName: 'CI - Build & Test'
+  jobs:
+  - job: Build
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '$(nodeVersion)'
+      displayName: 'Install Node.js'
+
+    - script: npm ci
+      displayName: 'Install dependencies'
+
+    - script: npm run test --if-present
+      displayName: 'Run unit tests (Jest)'
+
+    # Build with PROD config (safe default for promotion)
+    - script: npm run build -- --configuration production
+      displayName: 'Build Angular app (prod)'
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(distFolder)'
+        artifactName: '$(artifactName)'
+      displayName: 'Publish build artifact'
+
+# =====================================================
+# DEV DEPLOYMENT
+# =====================================================
+- stage: Dev
+  displayName: 'Deploy to Dev'
+  dependsOn: CI
+  condition: succeeded()
+  jobs:
+  - deployment: DeployDev
+    displayName: 'Dev Deployment'
+    environment: 'dev'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          # 1. Download build artifact
+          - download: current
+            artifact: '$(artifactName)'
+
+          # 2. Retrieve secrets from Azure Key Vault
+          - task: AzureKeyVault@2
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              KeyVaultName: 'your-keyvault-name'   # Replace with your Key Vault
+              SecretsFilter: '*'                   # Fetch all secrets
+              RunAsPreJob: false
+            name: FetchSecrets
+
+          # 3. Deploy to App Service using secrets
+          - task: AzureWebApp@1
+            displayName: 'Deploy to Dev App Service'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'
+              appName: '$(devAppName)'
+              package: '$(Pipeline.Workspace)/$(artifactName)/**'
+              # You can use secrets as environment variables
+              appSettings: |
+                CONNECTION_STRING=$(myConnectionString)  # Example secret
+                API_KEY=$(myApiKey)
+
+
+# =====================================================
+# TEST DEPLOYMENT
+# =====================================================
+- stage: Test
+  displayName: 'Deploy to Test'
+  dependsOn: Dev
+  condition: succeeded()
+  jobs:
+  - deployment: DeployTest
+    displayName: 'Test Deployment'
+    environment: 'test'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - download: current
+            artifact: '$(artifactName)'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy to Test App Service'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'
+              appName: '$(testAppName)'
+              package: '$(Pipeline.Workspace)/$(artifactName)/**'
+
+# =====================================================
+# PROD DEPLOYMENT
+# =====================================================
+- stage: Prod
+  displayName: 'Deploy to Prod'
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - deployment: DeployProd
+    displayName: 'Production Deployment'
+    environment: 'prod'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - download: current
+            artifact: '$(artifactName)'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy to Prod App Service'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'
+              appName: '$(prodAppName)'
+              package: '$(Pipeline.Workspace)/$(artifactName)/**'
