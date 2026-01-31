@@ -12,15 +12,8 @@ variables:
   nodeVersion: '20.x'
   artifactName: 'angular-starter'
   distFolder: 'dist'
-
-  # Azure service connection
   azureSubscription: ''
-
-  # App Services per environment
   devAppName: 'angular-starter-dev'
-  testAppName: 'angular-starter-test'
-  prodAppName: 'angular-starter-prod'
-
 stages:
 
 # =====================================================
@@ -100,60 +93,5 @@ stages:
                 API_KEY=$(myApiKey)
 
 
-# =====================================================
-# TEST DEPLOYMENT
-# =====================================================
-- stage: Test
-  displayName: 'Deploy to Test'
-  dependsOn: Dev
-  condition: succeeded()
-  jobs:
-  - deployment: DeployTest
-    displayName: 'Test Deployment'
-    environment: 'test'
-    pool:
-      vmImage: 'ubuntu-latest'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
 
-          - download: current
-            artifact: '$(artifactName)'
-
-          - task: AzureWebApp@1
-            displayName: 'Deploy to Test App Service'
-            inputs:
-              azureSubscription: '$(azureSubscription)'
-              appType: 'webApp'
-              appName: '$(testAppName)'
-              package: '$(Pipeline.Workspace)/$(artifactName)/**'
-
-# =====================================================
-# PROD DEPLOYMENT
-# =====================================================
-- stage: Prod
-  displayName: 'Deploy to Prod'
-  dependsOn: Test
-  condition: succeeded()
-  jobs:
-  - deployment: DeployProd
-    displayName: 'Production Deployment'
-    environment: 'prod'
-    pool:
-      vmImage: 'ubuntu-latest'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-
-          - download: current
-            artifact: '$(artifactName)'
-
-          - task: AzureWebApp@1
-            displayName: 'Deploy to Prod App Service'
-            inputs:
-              azureSubscription: '$(azureSubscription)'
-              appType: 'webApp'
-              appName: '$(prodAppName)'
               package: '$(Pipeline.Workspace)/$(artifactName)/**'
