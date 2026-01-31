@@ -91,7 +91,4 @@ stages:
               appSettings: |
                 CONNECTION_STRING=$(myConnectionString)  # Example secret
                 API_KEY=$(myApiKey)
-
-
-
               package: '$(Pipeline.Workspace)/$(artifactName)/**'
