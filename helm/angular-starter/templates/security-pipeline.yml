@@ -1,0 +1,173 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  # Node
+  nodeVersion: '20.x'
+  artifactName: 'angular-starter'
+  distFolder: 'dist'
+
+  # Azure service connection
+  azureSubscription: ''            # Replace with your Azure service connection
+  acrName: 'your-acr-name'         # Replace with your ACR name
+  aksClusterName: 'your-aks-cluster'
+  aksResourceGroup: 'your-aks-rg'
+  k8sNamespace: 'angular-starter'
+
+  # Helm chart
+  helmReleaseName: 'angular-starter'
+  helmChartPath: 'helm/angular-starter'
+
+  # SonarQube
+  sonarQubeServiceConnection: 'SonarQubeServiceConnection' # Replace with your SonarQube service connection
+  sonarProjectKey: 'angular-starter'
+  sonarProjectName: 'Angular Starter'
+
+stages:
+
+# =====================================================
+# CI – Build, Test & SonarQube Analysis
+# =====================================================
+- stage: CI
+  displayName: 'CI - Build, Test & SonarQube'
+  jobs:
+  - job: Build
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '$(nodeVersion)'
+      displayName: 'Install Node.js'
+
+    - script: npm ci
+      displayName: 'Install dependencies'
+
+    - script: npm run test --if-present
+      displayName: 'Run unit tests (Jest)'
+
+    # ------------------------------
+    # SonarQube Analysis
+    # ------------------------------
+    - task: SonarQubePrepare@5
+      inputs:
+        SonarQube: '$(sonarQubeServiceConnection)'
+        scannerMode: 'CLI'
+        configMode: 'manual'
+        cliProjectKey: '$(sonarProjectKey)'
+        cliProjectName: '$(sonarProjectName)'
+        cliSources: '.'
+      displayName: 'Prepare SonarQube Analysis'
+
+    - script: npm run build -- --configuration production
+      displayName: 'Build Angular app (prod)'
+
+    - task: SonarQubeAnalyze@5
+      displayName: 'Run SonarQube Analysis'
+
+    - task: SonarQubePublish@5
+      inputs:
+        pollingTimeoutSec: '300'
+      displayName: 'Publish SonarQube Report'
+
+    # ------------------------------
+    # Publish artifact
+    # ------------------------------
+    - task: PublishBuildArtifacts@1
+      inputs:
+        pathToPublish: '$(distFolder)'
+        artifactName: '$(artifactName)'
+      displayName: 'Publish build artifact'
+
+# =====================================================
+# Container – Build Docker image and push to ACR
+# =====================================================
+- stage: Container
+  displayName: 'Container Build & Push'
+  dependsOn: CI
+  jobs:
+  - job: BuildAndPush
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: Docker@2
+      displayName: 'Build and Push Docker Image'
+      inputs:
+        command: buildAndPush
+        repository: '$(acrName).azurecr.io/$(artifactName)'
+        dockerfile: Dockerfile
+        containerRegistry: '$(acrName)-service-connection' # replace with ACR service connection
+        tags: |
+          $(Build.BuildId)
+          latest
+
+    # Attach ACR to AKS (idempotent)
+    - task: AzureCLI@2
+      displayName: 'Attach ACR to AKS'
+      inputs:
+        azureSubscription: '$(azureSubscription)'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az aks update \
+            --resource-group $(aksResourceGroup) \
+            --name $(aksClusterName) \
+            --attach-acr $(acrName)
+
+# =====================================================
+# AKS – Deploy application via Helm chart
+# =====================================================
+- stage: AKS
+  displayName: 'Deploy to AKS'
+  dependsOn: Container
+  condition: succeeded()
+  jobs:
+  - deployment: DeployAKS
+    displayName: 'AKS Deployment'
+    environment: 'aks-dev'
+    pool:
+      vmImage: 'ubuntu-latest'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+
+          # ----------------------------
+          # Set AKS context
+          # ----------------------------
+          - task: AzureCLI@2
+            displayName: 'Login to AKS'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az aks get-credentials \
+                  --resource-group $(aksResourceGroup) \
+                  --name $(aksClusterName) \
+                  --overwrite-existing
+
+          # ----------------------------
+          # Deploy via Helm
+          # ----------------------------
+          - task: HelmDeploy@0
+            displayName: 'Deploy Angular App via Helm'
+            inputs:
+              connectionType: 'None'
+              namespace: '$(k8sNamespace)'
+              command: 'upgrade'
+              chartType: 'FilePath'
+              chartPath: '$(helmChartPath)'
+              releaseName: '$(helmReleaseName)'
+              overrideValues: |
+                image.repository=$(acrName).azurecr.io/$(artifactName)
+                image.tag=$(Build.BuildId)
